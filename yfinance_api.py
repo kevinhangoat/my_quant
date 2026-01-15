@@ -1,7 +1,7 @@
 import datetime
 from typing import Optional
 import yfinance as yf
-import pdb
+import mplfinance as mpf
 
 class YFinanceClient:
     """Thin wrapper around yfinance for basic data retrieval."""
@@ -25,6 +25,7 @@ class YFinanceClient:
             interval=interval,
             auto_adjust=self.auto_adjust,
         )
+
     def get_1d(
         self,
         ticker: str,
@@ -64,9 +65,38 @@ class YFinanceClient:
         three_months_ago = today - datetime.timedelta(days=3 * 30)
         return self.get_4h(ticker, start=three_months_ago, end=today)
 
+    def get_between(
+        self,
+        ticker: str,
+        start: datetime.datetime,
+        end: datetime.datetime,
+        interval: str = "1m",
+    ):
+        """Return price data for a ticker between two datetimes."""
+        if start >= end:
+            raise ValueError("start must be earlier than end")
+        return self.get_history(ticker, start=start, end=end, interval=interval)
+
+    def plot_candlestick(
+        self,
+        data,
+    ):
+        """Fetch data and plot a candlestick chart using yfinance's built-in plot method."""
+        mpf.plot(data, type='candle')
+
 if __name__ == "__main__":
     client = YFinanceClient()
-    data_1d = client.get_past_three_years("AAPL")
-    data_4h = client.get_past_three_months("AAPL")
-    print(data_1d.tail(20))
-    print(data_4h.tail(20))
+    startdate = datetime.date(2025, 11, 10)
+    enddate = datetime.date(2025, 11, 13)
+
+    data_ = client.get_between(
+        "CL=F",
+        datetime.datetime(2025, 11, 10),
+        datetime.datetime(2025, 11, 13),
+        interval="1h",
+    )
+    client.plot_candlestick(data_)
+
+    data_["close_open"] = data_["Close"] - data_["Open"]
+    print(f"\nClose-Open ranges for CL=F from 2025-11-10 to 2025-11-13:")
+    print(data_[["Close", "close_open"]])
