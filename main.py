@@ -1,4 +1,4 @@
-from yfinance_api import YFinanceClient
+from utils.yfinance_client import YFinanceClient
 from strategies.vegas import vegas_tunnel
 
 
