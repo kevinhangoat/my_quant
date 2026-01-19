@@ -2,7 +2,8 @@ import datetime
 from typing import Optional
 import yfinance as yf
 import mplfinance as mpf
-
+import pandas as pd
+import pdb
 class YFinanceClient:
     """Thin wrapper around yfinance for basic data retrieval."""
 
@@ -80,22 +81,94 @@ class YFinanceClient:
     def plot_candlestick(
         self,
         data,
+        supply_zones=None,
+        demand_zones=None,
     ):
-        """Fetch data and plot a candlestick chart using yfinance's built-in plot method."""
-        mpf.plot(data, type='candle')
+        """Plot a candlestick chart with optional supply/demand zones."""
+
+        supply_zones = supply_zones or []
+        demand_zones = demand_zones or []
+
+        apds = []
+
+        def _zones_to_addplots(zones, color):
+            for zone in zones:
+                if len(zone) == 3:
+                    start_time, low, high = zone
+                elif len(zone) == 2:
+                    start_time, (low, high) = data.index[0], zone
+                else:
+                    continue
+                start_time = pd.Timestamp(start_time)
+                index_tz = getattr(data.index, "tz", None)
+                if index_tz is not None:
+                    if start_time.tzinfo is None:
+                        start_time = start_time.tz_localize(index_tz)
+                    else:
+                        start_time = start_time.tz_convert(index_tz)
+                mask = data.index >= start_time
+                if not mask.any():
+                    continue
+                y_low = pd.Series(index=data.index, dtype="float64")
+                y_high = y_low.copy()
+                y_low.loc[mask] = low
+                y_high.loc[mask] = high
+                pdb.set_trace()
+                apds.append(
+                    mpf.make_addplot(
+                        y_high,
+                        panel=0,
+                        color=color,
+                        alpha=0,
+                        fill_between=dict(y1=y_high.values, y2=y_low.values, alpha=0.2, color=color),
+                    )
+                )
+                apds.append(
+                    mpf.make_addplot(
+                    y_low,
+                    panel=0,
+                    color=color,
+                    linestyle="--",
+                    width=0.6,
+                    )
+                )
+                apds.append(
+                    mpf.make_addplot(
+                    y_high,
+                    panel=0,
+                    color=color,
+                    linestyle="--",
+                    width=0.6,
+                    )
+                )
+
+        _zones_to_addplots(supply_zones, "tab:red")
+        _zones_to_addplots(demand_zones, "tab:green")
+
+        mpf.plot(
+            data,
+            type="candle",
+            addplot=apds if apds else None,
+        )
+
+        mpf.show()
 
 if __name__ == "__main__":
     client = YFinanceClient()
-    startdate = datetime.date(2025, 11, 10)
-    enddate = datetime.date(2025, 11, 13)
+    start_date = datetime.date(2025, 11, 10)
+    end_date = datetime.date(2025, 11, 13)
 
     data_ = client.get_between(
         "CL=F",
-        datetime.datetime(2025, 11, 10),
-        datetime.datetime(2025, 11, 13),
+        start_date,
+        end_date,
         interval="1h",
     )
-    client.plot_candlestick(data_)
+    client.plot_candlestick(
+        data_,
+        supply_zones=[(datetime.datetime(2025, 11, 11, 0), 60, 60.5)],
+        demand_zones=[(datetime.datetime(2025, 11, 11, 3), 54, 53.5)],
+    )
 
     data_["close_open"] = data_["Close"] - data_["Open"]
     print(f"\nClose-Open ranges for CL=F from 2025-11-10 to 2025-11-13:")
