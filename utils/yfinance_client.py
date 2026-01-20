@@ -4,6 +4,7 @@ import yfinance as yf
 import mplfinance as mpf
 import pandas as pd
 import pdb
+
 class YFinanceClient:
     """Thin wrapper around yfinance for basic data retrieval."""
 
@@ -81,24 +82,15 @@ class YFinanceClient:
     def plot_candlestick(
         self,
         data,
-        supply_zones=None,
-        demand_zones=None,
+        zones = []
     ):
         """Plot a candlestick chart with optional supply/demand zones."""
-
-        supply_zones = supply_zones or []
-        demand_zones = demand_zones or []
 
         apds = []
 
         def _zones_to_addplots(zones, color):
             for zone in zones:
-                if len(zone) == 3:
-                    start_time, low, high = zone
-                elif len(zone) == 2:
-                    start_time, (low, high) = data.index[0], zone
-                else:
-                    continue
+                start_time, low, high = zone.end, zone.lower, zone.upper
                 start_time = pd.Timestamp(start_time)
                 index_tz = getattr(data.index, "tz", None)
                 if index_tz is not None:
@@ -113,7 +105,6 @@ class YFinanceClient:
                 y_high = y_low.copy()
                 y_low.loc[mask] = low
                 y_high.loc[mask] = high
-                pdb.set_trace()
                 apds.append(
                     mpf.make_addplot(
                         y_high,
@@ -141,14 +132,16 @@ class YFinanceClient:
                     width=0.6,
                     )
                 )
-
-        _zones_to_addplots(supply_zones, "tab:red")
-        _zones_to_addplots(demand_zones, "tab:green")
+        if len(zones) > 0:
+            supply_zones = [z for z in zones if z.zone_type == "supply"]
+            demand_zones = [z for z in zones if z.zone_type == "demand"]
+            _zones_to_addplots(supply_zones, "tab:red")
+            _zones_to_addplots(demand_zones, "tab:green")
 
         mpf.plot(
             data,
             type="candle",
-            addplot=apds if apds else None,
+            addplot=apds,
         )
 
         mpf.show()

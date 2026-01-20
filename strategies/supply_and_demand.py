@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from typing import List, Literal, Optional, Sequence, Tuple
 
 import pandas as pd
-import yfinance as yf
+from utils.yfinance_client import YFinanceClient
 import pdb
 ZoneType = Literal["supply", "demand"]
 
 
 @dataclass
-class SupplyDemandZone:
+class SupplyDemandZoneCandle:
     zone_type: ZoneType
     start: pd.Timestamp
     end: pd.Timestamp
@@ -71,15 +71,16 @@ def detect_supply_demand_zones(
     price_df: pd.DataFrame,
     *,
     base_lengths: Sequence[int] = (2, 3, 4, 5, 6),
-    base_atr_multiplier: float = 1.0,
-    move_atr_multiplier: float = 1.0,
-    trend_lookback: int = 3,
-    confirm_lookahead: int = 4,
+    base_atr_multiplier: float = 2.5,
+    move_atr_multiplier: float = 2.0,
+    trend_lookback: int = 6,
+    confirm_lookahead: int = 6,
     min_separation_atr: float = 0.25,
     high_col: str = "High",
     low_col: str = "Low",
+    open_col: str = "Open",
     close_col: str = "Close",
-) -> List[SupplyDemandZone]:
+) -> List[SupplyDemandZoneCandle]:
     """
     Identify supply/demand zones using a simplified rally/drop-base-rally/drop playbook.
 
@@ -94,7 +95,7 @@ def detect_supply_demand_zones(
     df = price_df.copy().sort_index()
     df["atr"] = _atr(df, high_col=high_col, low_col=low_col, close_col=close_col)
     close = df[close_col]
-    zones: List[SupplyDemandZone] = []
+    zones: List[SupplyDemandZoneCandle] = []
 
     max_base = max(base_lengths)
     if len(df) < max_base + confirm_lookahead + trend_lookback:
@@ -107,6 +108,7 @@ def detect_supply_demand_zones(
                 break
 
             window = df.iloc[base_start:base_end]
+
             atr_mean = window["atr"].mean()
             if atr_mean == 0:
                 continue
@@ -114,14 +116,19 @@ def detect_supply_demand_zones(
             base_range = window[high_col].max() - window[low_col].min()
             if base_range > atr_mean * base_atr_multiplier:
                 continue
-            
-            threshold = atr_mean * move_atr_multiplier
-            prior_move = _has_prior_move(close, base_start, trend_lookback, threshold)
-            post_move = _has_post_move(close, base_end, confirm_lookahead, threshold)
+
+            breakout_bar_threshold = atr_mean * move_atr_multiplier
+            prior_move = _has_prior_move(close, base_start, trend_lookback, breakout_bar_threshold)
+            post_move = _has_post_move(close, base_end, confirm_lookahead, breakout_bar_threshold)
 
             if prior_move is None or post_move is None:
                 continue
-                
+            breakout_bar = df.iloc[base_end]
+            breakout_range = float(breakout_bar[close_col]) - float(breakout_bar[open_col])
+            breakout_close_move = float(close.iloc[base_end] - close.iloc[base_end - 1])
+            if abs(breakout_close_move) < breakout_bar_threshold and breakout_range < breakout_bar_threshold:
+                continue
+
             pattern: Optional[str] = None
             zone_type: Optional[ZoneType] = None
             if prior_move > 0 and post_move < 0:
@@ -135,11 +142,12 @@ def detect_supply_demand_zones(
 
             if pattern is None or zone_type is None:
                 continue
-            
+
             upper = float(window[high_col].max())
             lower = float(window[low_col].min())
             midpoint = (upper + lower) / 2
 
+            # Avoid duplicate
             if any(
                 (z.zone_type == zone_type)
                 and abs(midpoint - z.midpoint) <= (z_strength_atr * min_separation_atr)
@@ -147,14 +155,14 @@ def detect_supply_demand_zones(
             ):
                 continue
 
-            strength = abs(post_move) / threshold
+            strength = abs(post_move) / breakout_bar_threshold
             zones.append(
-                SupplyDemandZone(
+                SupplyDemandZoneCandle(
                     zone_type=zone_type,
                     start=df.index[base_start],
                     end=df.index[base_end - 1],
-                    upper=upper,
-                    lower=lower,
+                    upper=float(df.iloc[base_end - 1][high_col]),
+                    lower=float(df.iloc[base_end - 1][low_col]),
                     pattern=pattern,
                     strength=float(strength),
                 )
@@ -163,7 +171,7 @@ def detect_supply_demand_zones(
     return zones
 
 
-def zones_to_frame(zones: List[SupplyDemandZone]) -> pd.DataFrame:
+def zones_to_frame(zones: List[SupplyDemandZoneCandle]) -> pd.DataFrame:
     """Convert detected zones into a friendly DataFrame."""
     return pd.DataFrame(
         [
@@ -180,35 +188,29 @@ def zones_to_frame(zones: List[SupplyDemandZone]) -> pd.DataFrame:
         ]
     )
 
-
-def find_zones_for_ticker(
-    ticker: str,
-    *,
-    months: int = 3,
-    interval: str = "4h",
-    auto_adjust: bool = True,
-    **zone_kwargs,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Fetch recent data via yfinance and return detected supply/demand zones.
-
-    Returns (price_df, zones_df).
-    """
-    end = datetime.date.today()
-    start = end - datetime.timedelta(days=months * 30)
-    ticker_obj = yf.Ticker(ticker)
-    price = ticker_obj.history(
-        start=start,
-        end=end,
-        interval=interval,
-        auto_adjust=auto_adjust,
-    )
-    zones = detect_supply_demand_zones(price, **zone_kwargs)
-    return price, zones_to_frame(zones)
-
-
 if __name__ == "__main__":
-    ticker = "USDCHF=X"
-    prices, zones = find_zones_for_ticker(ticker)
-    print(f"Detected {len(zones)} zones for {ticker} (past three months, 4H):")
-    print(zones.tail(20))
+    ticker = "CL=F"
+    client = YFinanceClient()
+    startdate = datetime.date(2025, 11, 11)
+    enddate = datetime.date(2025, 11, 13)
+
+    data_ = client.get_between(
+        ticker,
+        startdate,
+        enddate,
+        interval="1h",
+    )
+
+    back_testing_data = client.get_between(
+        ticker,
+        datetime.date(2025, 11, 14),
+        datetime.date(2026, 1, 10),
+        interval="1h",
+    )
+    zones = detect_supply_demand_zones(data_)
+    zones_frame = zones_to_frame(zones)
+
+    print(f"Detected {len(zones_frame)} zones for {ticker} (past three months, 1H):")
+    print(zones_frame)
+
+    client.plot_candlestick(data_, zones=zones)
