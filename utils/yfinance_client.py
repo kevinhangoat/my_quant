@@ -82,7 +82,8 @@ class YFinanceClient:
     def plot_candlestick(
         self,
         data,
-        zones = []
+        zones = [],
+        trades_df = None,
     ):
         """Plot a candlestick chart with optional supply/demand zones."""
 
@@ -132,6 +133,82 @@ class YFinanceClient:
                     width=0.6,
                     )
                 )
+        if trades_df is not None and not trades_df.empty:
+            for _, trade in trades_df.iterrows():
+                entry_time = pd.Timestamp(trade["entry_time"])
+                index_tz = getattr(data.index, "tz", None)
+                if index_tz is not None:
+                    if entry_time.tzinfo is None:
+                        entry_time = entry_time.tz_localize(index_tz)
+                    else:
+                        entry_time = entry_time.tz_convert(index_tz)
+
+                nearest_idx = data.index.get_indexer([entry_time], method="nearest")
+                if nearest_idx[0] == -1:
+                    continue
+                entry_idx = data.index[nearest_idx[0]]
+
+                entry_price = trade["entry_price"]
+                raw_side = str(trade.get("side", trade.get("direction", "buy"))).strip().lower()
+                label = "BUY" if raw_side.startswith("l") else "SELL"
+                marker = f"${label}$"
+                color = "green" if label == "BUY" else "red"
+
+                marker_series = pd.Series(index=data.index, dtype="float64")
+                marker_series.loc[entry_idx] = entry_price
+                apds.append(
+                    mpf.make_addplot(
+                        marker_series,
+                        panel=0,
+                        type="scatter",
+                        marker=marker,
+                        markersize=300,
+                        color=color,
+                    )
+                )
+
+                exit_time = trade.get("exit_time") or trade.get("close_time") or trade.get("end_time")
+                if exit_time is not None:
+                    exit_time = pd.Timestamp(exit_time)
+                    if index_tz is not None:
+                        if exit_time.tzinfo is None:
+                            exit_time = exit_time.tz_localize(index_tz)
+                        else:
+                            exit_time = exit_time.tz_convert(index_tz)
+                    exit_idx_pos = data.index.get_indexer([exit_time], method="nearest")
+                    end_idx = data.index[exit_idx_pos[0]] if exit_idx_pos[0] != -1 else data.index[-1]
+                else:
+                    end_idx = data.index[-1]
+
+                if end_idx < entry_idx:
+                    continue
+                mask = (data.index >= entry_idx) & (data.index <= end_idx)
+                if not mask.any():
+                    continue
+
+                def _add_band(lower_val, upper_val, fill_color, alpha=0.18):
+                    if lower_val is None or upper_val is None:
+                        return
+                    low, high = sorted([lower_val, upper_val])
+                    lower_series = pd.Series(index=data.index, dtype="float64")
+                    upper_series = lower_series.copy()
+                    lower_series.loc[mask] = low
+                    upper_series.loc[mask] = high
+                    apds.append(
+                        mpf.make_addplot(
+                            upper_series,
+                            panel=0,
+                            color=fill_color,
+                            alpha=0,
+                            fill_between=dict(y1=upper_series.values, y2=lower_series.values, alpha=alpha, color=fill_color),
+                        )
+                    )
+
+                stop_loss = trade.get("stop_loss")
+                take_profit = trade.get("take_profit")
+                _add_band(entry_price, stop_loss, "#020202")
+                _add_band(entry_price, take_profit, "#07A3F8")
+
         if len(zones) > 0:
             supply_zones = [z for z in zones if z.zone_type == "supply"]
             demand_zones = [z for z in zones if z.zone_type == "demand"]
@@ -148,21 +225,16 @@ class YFinanceClient:
 
 if __name__ == "__main__":
     client = YFinanceClient()
-    start_date = datetime.date(2025, 11, 10)
+    start_date = datetime.date(2024, 11, 10)
     end_date = datetime.date(2025, 11, 13)
 
     data_ = client.get_between(
-        "CL=F",
+        "USDCHF=X",
         start_date,
         end_date,
-        interval="1h",
+        interval="1wk",
     )
-    client.plot_candlestick(
-        data_,
-        supply_zones=[(datetime.datetime(2025, 11, 11, 0), 60, 60.5)],
-        demand_zones=[(datetime.datetime(2025, 11, 11, 3), 54, 53.5)],
-    )
-
+    client.plot_candlestick(data_)
     data_["close_open"] = data_["Close"] - data_["Open"]
-    print(f"\nClose-Open ranges for CL=F from 2025-11-10 to 2025-11-13:")
+    print(f"\nClose-Open ranges for USDCHF from 2024-11-10 to 2025-11-13:")
     print(data_[["Close", "close_open"]])
