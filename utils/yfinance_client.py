@@ -91,8 +91,7 @@ class YFinanceClient:
 
         def _zones_to_addplots(zones, color):
             for zone in zones:
-                start_time, low, high = zone.end, zone.lower, zone.upper
-                start_time = pd.Timestamp(start_time)
+                start_time, broken_time, low, high = zone.end, zone.broken_time, zone.lower, zone.upper
                 index_tz = getattr(data.index, "tz", None)
                 if index_tz is not None:
                     if start_time.tzinfo is None:
@@ -100,6 +99,8 @@ class YFinanceClient:
                     else:
                         start_time = start_time.tz_convert(index_tz)
                 mask = data.index >= start_time
+                if broken_time is not None:
+                    mask &= data.index <= broken_time
                 if not mask.any():
                     continue
                 y_low = pd.Series(index=data.index, dtype="float64")
