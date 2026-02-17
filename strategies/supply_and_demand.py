@@ -202,6 +202,8 @@ def detect_supply_demand_zones(
 
             zone_high = float(df.iloc[base_end - 1][high_col])
             zone_low = float(df.iloc[base_end - 1][low_col])
+            if zone_type == "supply": zone_high = max(zone_high, float(df.iloc[base_end][high_col]))
+            if zone_type == "demand":  zone_low = min(zone_low, float(df.iloc[base_end][low_col]))
             midpoint = (zone_high + zone_low) / 2
 
             if _zones_too_close(zones, zone_type, midpoint, df, min_separation_atr):
@@ -210,10 +212,9 @@ def detect_supply_demand_zones(
                 continue
             if _consecutive_conflict(zones, df, base_start, base_end):
                 continue
-
-            strength = abs(post_move) / breakout_bar_threshold_post
             original_range = zone_high - zone_low
-
+            strength = abs(breakout_range) / abs(original_range)
+            if strength <= 0.6: continue
             zones.append(
                 SupplyDemandZoneCandle(
                     zone_type=zone_type,
@@ -258,7 +259,7 @@ class SupplyDemandStrategy():
         interval: str = "4h",
         spread: float = 0.001,
         time_buffer: int = 3,
-        risk_reward_ratio: float = 2.0,
+        risk_reward_ratio: float = 2.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
