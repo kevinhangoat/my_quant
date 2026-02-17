@@ -5,7 +5,6 @@ from typing import List, Literal, Optional, Sequence
 import pandas as pd
 import pdb
 
-from strategies.strategy import BaseStrategy
 from utils.yfinance_client import YFinanceClient
 
 ZoneType = Literal["supply", "demand"]

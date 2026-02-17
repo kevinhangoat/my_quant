@@ -91,7 +91,7 @@ class YFinanceClient:
 
         def _zones_to_addplots(zones, color):
             for zone in zones:
-                start_time, broken_time, low, high = zone.end, zone.broken_time, zone.lower, zone.upper
+                start_time, broken_time, low, high, strength = zone.end, zone.broken_time, zone.lower, zone.upper, zone.strength
                 index_tz = getattr(data.index, "tz", None)
                 if index_tz is not None:
                     if start_time.tzinfo is None:
@@ -116,6 +116,22 @@ class YFinanceClient:
                         fill_between=dict(y1=y_high.values, y2=y_low.values, alpha=0.2, color=color),
                     )
                 )
+                if strength is not None and mask.any():
+                    zone_indices = data.index[mask]
+                    mid_idx = zone_indices[len(zone_indices) // 2]
+                    strength_series = pd.Series(index=data.index, dtype="float64")
+                    strength_series.loc[mid_idx] = low + (high - low) / 2
+                    strength_label = f"{float(strength):.2f}" if strength is not None else ""
+                    apds.append(
+                        mpf.make_addplot(
+                            strength_series,
+                            panel=0,
+                            type="scatter",
+                            marker=f"${strength_label}$",
+                            markersize=260,
+                            color=color,
+                        )
+                    )
                 apds.append(
                     mpf.make_addplot(
                     y_low,

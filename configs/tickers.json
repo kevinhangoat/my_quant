@@ -1,0 +1,58 @@
+{
+    "aapl": {
+        "ticker": "AAPL",
+        "spread": 0.1
+    },
+    "goog": {
+        "ticker": "GOOG",
+        "spread": 0.1
+    },
+    "meta": {
+        "ticker": "META",
+        "spread": 0.1
+    },
+    "msft": {           
+        "ticker": "MSFT",
+        "spread": 0.1
+    },
+    "btcusd": {
+        "ticker": "BTC-USD",
+        "spread": 1
+    },
+    "usdchf": {
+        "ticker": "USDCHF=X",
+        "spread": 0.0002
+    },
+    "usdcad": {
+        "ticker": "USDCAD=X",
+        "spread": 0.0002
+    },
+    "eurusd": {
+        "ticker": "EURUSD=X",
+        "spread": 0.0002
+    },
+    "gbpusd": {
+        "ticker": "GBPUSD=X",
+        "spread": 0.0002
+    },
+    "usdjpy": {
+        "ticker": "USDJPY=X",
+        "spread": 0.02
+    },
+    "audusd": {
+        "ticker": "AUDUSD=X",
+        "spread": 0.0002
+    },
+    "oilusd": {
+        "ticker": "CL=F",
+        "spread": 0.04
+    },
+    "gbpjpy": {
+        "ticker": "GBPJPY=X",
+        "spread": 0.02
+    },
+    "xauusd": {
+        "ticker": "GC=F",
+        "spread": 0.5
+    }
+}
