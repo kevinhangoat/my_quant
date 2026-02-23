@@ -123,21 +123,68 @@ def simulate_account(
         snapshot(final_ts, "mark open positions")
 
     history_df = pd.DataFrame(history).sort_values("timestamp")
-    print(history_df)
+    # print(history_df)
+    print(f"Total Profit: {(balance-initial_balance):.2f} {balance_unit}\n")
 
     equity_data = [(row.timestamp, row.equity) for row in history_df.itertuples()]
     plot_history(equity_data, title="Equity " + title)
 
-    margin_level_data = [(row.timestamp, row.margin_level) for row in history_df.itertuples()]
-    plot_history(margin_level_data, title="Margin Level " + title)
+    # margin_level_data = [(row.timestamp, row.margin_level) for row in history_df.itertuples()]
+    # plot_history(margin_level_data, title="Margin Level " + title)
 
-    margin_level_data = [(row.timestamp, row.open_trades) for row in history_df.itertuples()]
-    plot_history(margin_level_data, title="Open Trades " + title)
+    # margin_level_data = [(row.timestamp, row.open_trades) for row in history_df.itertuples()]
+    # plot_history(margin_level_data, title="Open Trades " + title)
+
+
+def backtest_target(target, ticker_info, start_date, end_date, interval, plot):
+        print(f"Trading for {target} from {start_date} to {end_date}:")
+        ticker = ticker_info["ticker"]
+        spread = ticker_info["spread"]
+        client = YFinanceClient()
+
+        data_ = client.get_between(ticker, start_date, end_date, interval=interval)
+
+        zones = detect_supply_demand_zones(data_)
+        zones_frame = zones_to_frame(zones)
+
+        print(f"Detected {len(zones_frame)} zones for {ticker}:")
+        # print(zones_frame)
+
+        cur_strategy = SupplyDemandStrategy(
+            ticker=ticker,
+            client=client,
+            start=start_date,
+            end=end_date,
+            interval=interval,
+            spread=spread,
+            config_path="configs/sad_params.json",
+        )
+        cur_strategy.run(visualize=plot)
+
+        trades_df = cur_strategy.get_trades_df()
+        if not trades_df.empty:
+            simulate_account(data_, trades_df, title=f"Over Time for {target}")
+        else:
+            print("No trades executed, skipping balance simulation.")
+        return data_, trades_df
+
+
+def backtest_year_by_month(target, ticker_info, year=2025, interval="1h"):
+    for m in range(1, 12):
+        backtest_target(
+            target=ticker_info["ticker"],
+            ticker_info=ticker_info,
+            start_date=datetime.date(year, m, 1),
+            end_date=datetime.date(year, m+1, 1),
+            interval=interval,
+            plot=False,
+        )
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(description="Backtest your strategy.")
     argparser.add_argument("targets", type=str, nargs='+', default=["usdchf"], help="Ticker symbol(s) to backtest on")
     argparser.add_argument("--plot", action="store_true", help="Whether to plot candles")
+    argparser.add_argument("--config_path", type=str, default="configs/sad_params.json", help="Path to strategy config file")
     args = argparser.parse_args()
 
     
@@ -164,7 +211,7 @@ if __name__ == "__main__":
             interval=interval,
         )
         
-        zones = detect_supply_demand_zones(data_)
+        zones = detect_supply_demand_zones(data_, config_path=args.config_path)
         zones_frame = zones_to_frame(zones)
 
 
@@ -179,6 +226,7 @@ if __name__ == "__main__":
             end=end_date,
             interval=interval,
             spread=spread,
+            config_path=args.config_path,
         )
         cur_strategy.run(visualize=args.plot)
 

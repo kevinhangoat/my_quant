@@ -1,0 +1,16 @@
+{
+    "base_lengths": [1, 2, 3, 4, 5, 6, 7],
+    "base_atr_multiplier": 5.0,
+    "move_atr_multiplier_prior": 0.5,
+    "move_atr_multiplier_post": 1.5,
+    "trend_lookback": 6,
+    "confirm_lookahead": 6,
+    "min_separation_atr": 0.25,
+    "high_col": "High",
+    "low_col": "Low",
+    "open_col": "Open",
+    "close_col": "Close",
+    "zone_buffer_percentage": 0.0,
+    "time_buffer": 3,
+    "risk_reward_ratio": 1.5
+}
