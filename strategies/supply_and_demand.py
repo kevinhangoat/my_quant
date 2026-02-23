@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import List, Literal, Optional, Sequence
 
 import pandas as pd
+import json
 import pdb
 
 from utils.yfinance_client import YFinanceClient
@@ -119,21 +120,15 @@ def _consecutive_conflict(
     )
 
 
+def _load_config(config_path: str, valid_keys: set[str]) -> dict:
+    with open(config_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {k: v for k, v in data.items() if k in valid_keys}
+
+
 def detect_supply_demand_zones(
     price_df: pd.DataFrame,
-    *,
-    base_lengths: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
-    base_atr_multiplier: float = 5.0,
-    move_atr_multiplier_prior: float = 0.5,
-    move_atr_multiplier_post: float = 1.5,
-    trend_lookback: int = 6,
-    confirm_lookahead: int = 6,
-    min_separation_atr: float = 0.25,
-    high_col: str = "High",
-    low_col: str = "Low",
-    open_col: str = "Open",
-    close_col: str = "Close",
-    zone_buffer_percentage: float = 0.0,
+    config_path: Optional[str] = None,
 ) -> List[SupplyDemandZoneCandle]:
     """
     Identify supply/demand zones using a simplified rally/drop-base-rally/drop playbook.
@@ -141,6 +136,36 @@ def detect_supply_demand_zones(
     The logic mirrors the YouTube walkthrough: look for a tight base (small ATR range),
     ensure price moved into the base, and confirm a meaningful move away.
     """
+    params = {
+        "base_lengths": (1,),
+        "base_atr_multiplier": 5.0,
+        "move_atr_multiplier_prior": 0.5,
+        "move_atr_multiplier_post": 1.5,
+        "trend_lookback": 6,
+        "confirm_lookahead": 6,
+        "min_separation_atr": 0.25,
+        "high_col": "High",
+        "low_col": "Low",
+        "open_col": "Open",
+        "close_col": "Close",
+        "zone_buffer_percentage": 0.0,
+    }
+    if config_path:
+        params.update(_load_config(config_path, set(params)))
+
+    base_lengths = tuple(params["base_lengths"])
+    base_atr_multiplier = float(params["base_atr_multiplier"])
+    move_atr_multiplier_prior = float(params["move_atr_multiplier_prior"])
+    move_atr_multiplier_post = float(params["move_atr_multiplier_post"])
+    trend_lookback = int(params["trend_lookback"])
+    confirm_lookahead = int(params["confirm_lookahead"])
+    min_separation_atr = float(params["min_separation_atr"])
+    high_col = str(params["high_col"])
+    low_col = str(params["low_col"])
+    open_col = str(params["open_col"])
+    close_col = str(params["close_col"])
+    zone_buffer_percentage = float(params["zone_buffer_percentage"])
+
     required_cols = {high_col, low_col, close_col}
     missing = required_cols - set(price_df.columns)
     if missing:
@@ -201,8 +226,10 @@ def detect_supply_demand_zones(
 
             zone_high = float(df.iloc[base_end - 1][high_col])
             zone_low = float(df.iloc[base_end - 1][low_col])
-            if zone_type == "supply": zone_high = max(zone_high, float(df.iloc[base_end][high_col]))
-            if zone_type == "demand":  zone_low = min(zone_low, float(df.iloc[base_end][low_col]))
+            if zone_type == "supply":
+                zone_high = max(zone_high, float(df.iloc[base_end][high_col]))
+            if zone_type == "demand":
+                zone_low = min(zone_low, float(df.iloc[base_end][low_col]))
             midpoint = (zone_high + zone_low) / 2
 
             if _zones_too_close(zones, zone_type, midpoint, df, min_separation_atr):
@@ -212,8 +239,9 @@ def detect_supply_demand_zones(
             if _consecutive_conflict(zones, df, base_start, base_end):
                 continue
             original_range = zone_high - zone_low
-            strength = abs(breakout_range) / abs(original_range)
-            if strength <= 0.6: continue
+            strength = abs(breakout_range) / abs(original_range) if original_range > 0 else 0
+            if strength <= 0.6:
+                continue
             zones.append(
                 SupplyDemandZoneCandle(
                     zone_type=zone_type,
@@ -257,11 +285,11 @@ class SupplyDemandStrategy():
         end: datetime.date,
         interval: str = "4h",
         spread: float = 0.001,
-        time_buffer: int = 3,
-        risk_reward_ratio: float = 2.5,
+        config_path: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.config_path = config_path
         self.ticker = ticker
         self.client = client
         self.start = start
@@ -269,12 +297,13 @@ class SupplyDemandStrategy():
         self.interval = interval
         self._data: Optional[pd.DataFrame] = None
         self._zones: List[SupplyDemandZoneCandle] = []
-        self.time_buffer = time_buffer
         self.spread = spread
-        self.risk_reward_ratio = risk_reward_ratio
         self.trades_df: pd.DataFrame = pd.DataFrame()
         self.trade_count: int = 0
-        self.total_profit: float = 0.0
+        self.total_pnl: float = 0.0
+        self.time_buffer = _load_config(config_path, {"time_buffer"}).get("time_buffer", 1) if config_path else 1
+        self.risk_reward_ratio = _load_config(config_path, {"risk_reward_ratio"}).get("risk_reward_ratio", 1.5) if config_path else 1.5
+
 
     def load_data(self) -> pd.DataFrame:
         if self._data is None:
@@ -291,7 +320,7 @@ class SupplyDemandStrategy():
 
     def analyze(self) -> pd.DataFrame:
         data = self.load_data()
-        self._zones = detect_supply_demand_zones(data)
+        self._zones = detect_supply_demand_zones(data, self.config_path)
         return zones_to_frame(self._zones)
 
     def run(self, visualize: bool = False) -> pd.DataFrame:
@@ -306,7 +335,7 @@ class SupplyDemandStrategy():
         data = self.load_data().sort_index().copy()
         if zones is None:
             if not self._zones:
-                self._zones = detect_supply_demand_zones(data)
+                self._zones = detect_supply_demand_zones(data, self.config_path)
             zones_list: Sequence[SupplyDemandZoneCandle] = self._zones
         else:
             zones_list = list(zones)
@@ -321,7 +350,7 @@ class SupplyDemandStrategy():
 
         trades_df = pd.DataFrame(trades)
         self.trade_count = len(trades_df)
-        self.total_profit = float(trades_df["pnl"].sum()) if not trades_df.empty else 0.0
+        self.total_pnl = float(trades_df["pnl"].sum()) if not trades_df.empty else 0.0
         self._log_trade_summary(trades_df)
         return trades_df
 
@@ -445,8 +474,8 @@ class SupplyDemandStrategy():
         return default_exit_price, default_exit_time, default_outcome
 
     def _log_trade_summary(self, trades_df: pd.DataFrame) -> None:
-        print(trades_df)
-        print(f"Total profit: {self.total_profit:.2f}")
+        # print(trades_df)
+        print(f"Total pnl: {self.total_pnl:.4f}")
         if trades_df.empty:
             print("Win rate: N/A")
         else:
@@ -475,7 +504,7 @@ if __name__ == "__main__":
     zones_frame = zones_to_frame(zones)
 
     print(f"Detected {len(zones_frame)} zones for {ticker} (past three months, {interval}):")
-    print(zones_frame)
+    # print(zones_frame)
     client.plot_candlestick(data_, zones=zones)
 
     SupplyDemandStrategy(
