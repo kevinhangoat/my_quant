@@ -318,6 +318,9 @@ class SupplyDemandStrategy():
     def get_trades_df(self) -> pd.DataFrame:
         return self.trades_df.copy()
 
+    def get_zones(self) -> List[SupplyDemandZoneCandle]:
+        return self._zones.copy()
+
     def analyze(self) -> pd.DataFrame:
         data = self.load_data()
         self._zones = detect_supply_demand_zones(data, self.config_path)
