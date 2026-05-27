@@ -1,6 +1,6 @@
 {
     "start_date": "2024-03-20",
-    "end_date": "2026-02-17",
+    "end_date": "2026-06-01",
     "initial_capital": 1000,
-    "interval": ["4h"]
+    "interval": ["1d"]
 }
