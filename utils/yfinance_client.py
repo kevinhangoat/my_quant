@@ -150,24 +150,91 @@ class YFinanceClient:
         return s
 
     @classmethod
-    def _build_ma_addplots(cls, full_data, plot_data, price_col, windows, palette, colors_map):
+    def _ma_series(cls, full_data, price_col, window, ma_type="sma"):
+        """Return a moving-average series for `window`."""
+        src = full_data[price_col]
+        if str(ma_type).lower() == "ema":
+            return src.ewm(span=window, adjust=False, min_periods=1).mean()
+        return src.rolling(window=window, min_periods=1).mean()
+
+    @classmethod
+    def _build_ma_addplots(
+        cls, full_data, plot_data, price_col, windows, palette, colors_map, ma_type="sma",
+    ):
         windows = windows if windows is not None else cls.DEFAULT_MA_WINDOWS
         if not windows:
             return [], []
         palette = palette if palette is not None else cls.DEFAULT_MA_PALETTE
         color_cycle = itertools.cycle(palette)
+        prefix = "EMA" if str(ma_type).lower() == "ema" else "MA"
         apds, labels = [], []
         for window in windows:
             if window <= 0:
                 continue
-            series = full_data[price_col].rolling(window=window, min_periods=1).mean().loc[plot_data.index]
+            series = cls._ma_series(full_data, price_col, window, ma_type).loc[plot_data.index]
             if colors_map and window in colors_map:
                 color = colors_map[window]
             else:
                 color = next(color_cycle)
-            apds.append(mpf.make_addplot(series, panel=0, color=color, width=1.0, label=f"MA{window}"))
+            apds.append(mpf.make_addplot(series, panel=0, color=color, width=1.0, label=f"{prefix}{window}"))
             labels.append((window, series, color))
         return apds, labels
+
+    @classmethod
+    def _build_ma_band_addplots(
+        cls,
+        full_data,
+        plot_data,
+        price_col,
+        fill_between_mas,
+        ma_type="sma",
+        fast_above_color="#01F001",
+        fast_below_color="#F80000",
+        fill_alpha=0.18,
+    ):
+        """Fill the region between two MAs, coloured by which line is on top.
+
+        `fill_between_mas` is a 2-tuple/list ``(fast_window, slow_window)``.
+        Where fast>=slow the band is filled with ``fast_above_color``, otherwise
+        with ``fast_below_color``.
+        """
+        if not fill_between_mas or len(fill_between_mas) != 2:
+            return []
+        fast_w, slow_w = fill_between_mas
+        if fast_w <= 0 or slow_w <= 0:
+            return []
+
+        fast = cls._ma_series(full_data, price_col, fast_w, ma_type).loc[plot_data.index]
+        slow = cls._ma_series(full_data, price_col, slow_w, ma_type).loc[plot_data.index]
+        upper = fast.combine(slow, max)
+        lower = fast.combine(slow, min)
+
+        above_mask = (fast >= slow).fillna(False)
+        below_mask = ~above_mask & fast.notna() & slow.notna()
+
+        def _masked(series, mask):
+            out = pd.Series(index=plot_data.index, dtype="float64")
+            out.loc[mask] = series.loc[mask]
+            return out
+
+        apds = []
+        if above_mask.any():
+            up_hi = _masked(upper, above_mask)
+            up_lo = _masked(lower, above_mask)
+            apds.append(mpf.make_addplot(
+                up_hi, panel=0, color=fast_above_color, alpha=0,
+                fill_between=dict(y1=up_hi.values, y2=up_lo.values,
+                                  alpha=fill_alpha, color=fast_above_color),
+            ))
+        if below_mask.any():
+            dn_hi = _masked(upper, below_mask)
+            dn_lo = _masked(lower, below_mask)
+            apds.append(mpf.make_addplot(
+                dn_hi, panel=0, color=fast_below_color, alpha=0,
+                fill_between=dict(y1=dn_hi.values, y2=dn_lo.values,
+                                  alpha=fill_alpha, color=fast_below_color),
+            ))
+        return apds
 
     @classmethod
     def _build_macd_addplots(cls, full_data, plot_data, price_col, fast, slow, signal, colors_override):
@@ -347,6 +414,11 @@ class YFinanceClient:
         ma_colors: Optional[dict[int, str]] = None,
         ma_palette: Optional[Sequence[str]] = None,
         ma_price_col: str = "Close",
+        ma_type: str = "sma",
+        fill_between_mas: Optional[Sequence[int]] = None,
+        fill_above_color: str = "#2CA02C",
+        fill_below_color: str = "#D62728",
+        fill_alpha: float = 0.18,
         show_macd: bool = True,
         macd_fast: int = 12,
         macd_slow: int = 26,
@@ -383,8 +455,17 @@ class YFinanceClient:
         if show_mas:
             ma_apds, ma_labels = self._build_ma_addplots(
                 data, plot_data, ma_price_col, ma_windows, ma_palette, ma_colors,
+                ma_type=ma_type,
             )
             apds += ma_apds
+        if fill_between_mas:
+            apds += self._build_ma_band_addplots(
+                data, plot_data, ma_price_col, fill_between_mas,
+                ma_type=ma_type,
+                fast_above_color=fill_above_color,
+                fast_below_color=fill_below_color,
+                fill_alpha=fill_alpha,
+            )
         if show_macd:
             macd_apds, macd_labels = self._build_macd_addplots(
                 data, plot_data, macd_price_col, macd_fast, macd_slow, macd_signal, macd_colors,
@@ -405,8 +486,9 @@ class YFinanceClient:
 
         # End-of-series labels (only when caller supplied axes)
         if show_mas and ax is not None:
+            prefix = "EMA" if str(ma_type).lower() == "ema" else "MA"
             self._annotate_series_ends(
-                ax, plot_data, [(f"MA{w}", s, c) for w, s, c in ma_labels],
+                ax, plot_data, [(f"{prefix}{w}", s, c) for w, s, c in ma_labels],
             )
         if show_macd:
             self._annotate_series_ends(macd_ax, plot_data, macd_labels)

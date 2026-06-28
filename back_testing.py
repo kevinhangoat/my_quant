@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib
 import json
 from typing import Any
 
@@ -15,6 +16,10 @@ from strategies.supply_and_demand import (
     detect_supply_demand_zones,
     zones_to_frame,
 )
+# The 60_48 module name starts with a digit, so it must be imported dynamically.
+_ema_60_48_module = importlib.import_module("strategies.60_48")
+EMA60_48Strategy = _ema_60_48_module.EMA60_48Strategy
+evaluate_holding_periods = _ema_60_48_module.evaluate_holding_periods
 from utils.yfinance_client import YFinanceClient
 
 
@@ -223,6 +228,7 @@ def _run_interval(
     end_date,
     view_start_date,
     config_path: str,
+    strategy_name: str = "sad",
 ) -> dict[str, Any]:
     """Fetch data, detect zones, run strategy and return assembled artifacts."""
     data_ = client.get_between(
@@ -231,35 +237,76 @@ def _run_interval(
     )
     data_view = _slice_view(data_, start_date, end_date)
 
-    zones_in_window = _filter_zones_by_view(
-        zones_to_frame(detect_supply_demand_zones(data_, config_path=config_path)),
-        start_date, end_date,
-    )
-    print(f"Detected {len(zones_in_window)} zones for {ticker} {interval}:")
-    print(zones_in_window)
-
-    strategy = SupplyDemandStrategy(
-        ticker=ticker, client=client,
-        start=start_date, end=end_date,
-        interval=interval, spread=spread,
-        config_path=config_path,
-    )
-    strategy.run(visualize=False)
-
-    trades_view = _filter_trades_by_view(strategy.get_trades_df(), start_date, end_date)
-    if trades_view.empty:
-        print(f"No trades for {target} {interval}.")
+    if strategy_name == "60_48":
+        strategy = EMA60_48Strategy(
+            ticker=ticker, client=client,
+            start=start_date, end=end_date,
+            interval=interval, spread=spread,
+            config_path=config_path,
+        )
+        strategy.run(visualize=False)
+        trades_view = _filter_trades_by_view(strategy.get_trades_df(), start_date, end_date)
+        if trades_view.empty:
+            print(f"No trades for {target} {interval}.")
+        else:
+            print(f"Trades for {target} {interval}:")
+            print(trades_view)
+        evaluate_holding_periods(strategy, interval=interval)
+        fast = int(strategy.params["fast_period"])
+        slow = int(strategy.params["slow_period"])
+        plot_kwargs: dict[str, Any] = {
+            "ma_type": str(strategy.params["ma_type"]),
+            "show_macd": bool(strategy.params.get("plot_show_macd", True)),
+        }
+        if strategy.params.get("plot_only_band_mas", True):
+            plot_kwargs["ma_windows"] = (fast, slow)
+            plot_kwargs["ma_colors"] = {
+                fast: str(strategy.params.get("plot_fast_color", "#1F77B4")),
+                slow: str(strategy.params.get("plot_slow_color", "#FF7F0E")),
+            }
+        if strategy.params.get("plot_fill_band", True):
+            plot_kwargs["fill_between_mas"] = (fast, slow)
+            plot_kwargs["fill_above_color"] = str(strategy.params.get("plot_fast_above_color", "#2CA02C"))
+            plot_kwargs["fill_below_color"] = str(strategy.params.get("plot_fast_below_color", "#D62728"))
+            plot_kwargs["fill_alpha"] = float(strategy.params.get("plot_fill_alpha", 0.18))
+        return {
+            "data": data_,
+            "data_view": data_view,
+            "zones": [],
+            "trades_view": trades_view,
+            "view_start": view_start_date,
+            "plot_kwargs": plot_kwargs,
+        }
     else:
-        print(f"Trades for {target} {interval}:")
-        print(trades_view)
+        zones_in_window = _filter_zones_by_view(
+            zones_to_frame(detect_supply_demand_zones(data_, config_path=config_path)),
+            start_date, end_date,
+        )
+        print(f"Detected {len(zones_in_window)} zones for {ticker} {interval}:")
+        print(zones_in_window)
 
-    return {
-        "data": data_,
-        "data_view": data_view,
-        "zones": strategy.get_zones(),
-        "trades_view": trades_view,
-        "view_start": view_start_date,
-    }
+        strategy = SupplyDemandStrategy(
+            ticker=ticker, client=client,
+            start=start_date, end=end_date,
+            interval=interval, spread=spread,
+            config_path=config_path,
+        )
+        strategy.run(visualize=False)
+
+        trades_view = _filter_trades_by_view(strategy.get_trades_df(), start_date, end_date)
+        if trades_view.empty:
+            print(f"No trades for {target} {interval}.")
+        else:
+            print(f"Trades for {target} {interval}:")
+            print(trades_view)
+
+        return {
+            "data": data_,
+            "data_view": data_view,
+            "zones": strategy.get_zones(),
+            "trades_view": trades_view,
+            "view_start": view_start_date,
+        }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -267,17 +314,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("targets", type=str, nargs="+", default=["usdchf"],
                         help="Ticker symbol(s) to backtest on")
     parser.add_argument("--plot", action="store_true", help="Whether to plot candles")
-    parser.add_argument("--config_path", type=str, default="configs/sad_params.json",
-                        help="Path to strategy config file")
+    parser.add_argument("--config_path", type=str, default=None,
+                        help="Path to strategy config file (defaults depend on --strategy)")
+    parser.add_argument("--strategy", type=str, default="sad", choices=["sad", "60_48"],
+                        help="Which strategy to run: 'sad' (supply/demand) or '60_48' (EMA band).")
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    if args.config_path is None:
+        args.config_path = (
+            "configs/60_48_params.json" if args.strategy == "60_48"
+            else "configs/sad_params.json"
+        )
 
     with open("configs/tickers.json") as fh:
         ticker_names = json.load(fh)
-    with open("configs/test_infos.json") as fh:
+    with open("configs/test_infos_dayTrading.json") as fh:
         test_infos = json.load(fh)
 
     start_date = datetime.date.fromisoformat(test_infos["start_date"])
@@ -307,6 +361,7 @@ def main() -> None:
                 client=client, target=target, ticker=ticker, spread=spread,
                 interval=interval, start_date=start_date, end_date=end_date,
                 view_start_date=view_start_date, config_path=args.config_path,
+                strategy_name=args.strategy,
             )
             data_view_by_interval[interval] = result["data_view"]
             trades_view = result["trades_view"]
@@ -315,6 +370,7 @@ def main() -> None:
                 client.plot_candlestick(
                     result["data"], zones=result["zones"], trades_df=trades_view,
                     display_start=start_date, display_end=end_date,
+                    **result.get("plot_kwargs", {}),
                 )
 
             if not trades_view.empty:
