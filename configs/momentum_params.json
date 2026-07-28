@@ -1,0 +1,25 @@
+{
+    "fast_period": 12,
+    "slow_period": 26,
+
+    "min_change_pct": 30.0,
+    "min_relative_volume": 5.0,
+    "min_price": 3.0,
+    "max_price": 20.0,
+    "extended_hours": true,
+
+    "rvol_avg_window": 20,
+    "max_candidates_per_day": 50,
+    "include_otc": false,
+
+    "pullback_emas": [48, 60],
+    "pullback_tolerance": 0.003,
+    "require_above_slow_ema": true,
+
+    "profit_targets": [
+        [0.10, 1]
+    ],
+    "stop_loss_pct": 0.20,
+    "trailing_stop": false,
+    "max_trades_per_session": 1
+}
